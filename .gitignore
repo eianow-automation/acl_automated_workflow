@@ -6,9 +6,13 @@ dist/
 wheels/
 *.egg-info
 .idea
+.windsurf
 
 # Virtual environments
 .venv
 
+
 # output dir
 output
+
+.env
