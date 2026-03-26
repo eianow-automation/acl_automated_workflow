@@ -13,6 +13,10 @@ import streamlit as st
 import sys
 import os
 
+# Load environment variables before any other imports
+from dotenv import load_dotenv
+load_dotenv()
+
 # Add the current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -247,11 +251,15 @@ def main():
         
         if error_msg:
             # Check if it was an InfraHub fallback
-            if use_infrahub and "local file" in str(source):
+            if use_infrahub and "fallback" in str(source):
                 st.warning(f"⚠️ InfraHub failed: {error_msg}")
                 st.info("📄 Fell back to local file (prod_dhcp_ips.yml)")
             else:
                 st.error(f"❌ {error_msg}")
+        elif use_infrahub and "fallback" in str(source):
+            # InfraHub returned empty list, fell back to local file
+            st.warning("⚠️ InfraHub returned 0 IP addresses")
+            st.info("📄 Fell back to local file (prod_dhcp_ips.yml)")
         
         if dns_ips and rendered_acl:
             # Store in session state

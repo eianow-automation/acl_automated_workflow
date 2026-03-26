@@ -43,6 +43,13 @@ def generate_acl(use_infrahub: bool = False, fallback_on_error: bool = True):
         dns_ips, error_msg = utilities.get_prod_dhcp_ips()
         if dns_ips:
             source = "InfraHub"
+        elif dns_ips == [] and not error_msg:
+            # InfraHub returned empty list (API succeeded but no IPs found)
+            error_msg = "InfraHub returned 0 IP addresses"
+            if fallback_on_error:
+                pass  # Will fall through to local file below
+            else:
+                return None, None, None, error_msg
         elif fallback_on_error:
             # InfraHub failed - try local file as fallback
             pass  # Will fall through to local file below
@@ -76,7 +83,7 @@ def generate_acl(use_infrahub: bool = False, fallback_on_error: bool = True):
         with open(output_file, 'w') as f:
             f.write(rendered_acl)
         
-        return dns_ips, rendered_acl, source, None
+        return dns_ips, rendered_acl, source, error_msg
         
     except Exception as e:
         return None, None, None, f"Error generating ACL: {str(e)}"
