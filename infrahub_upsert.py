@@ -15,59 +15,115 @@ __license__ = "Python"
 import argparse
 import requests
 
+import os
+import requests
+import sys
+from dotenv import load_dotenv
 
-def gql_request(query, variables=None):
-    response = requests.post(URL, json={'query': query, 'variables': variables}, headers=HEADERS)
-    return response.json().get('data', {})
+# 1. Load credentials from .env
+load_dotenv()
+INFRAHUB_TOKEN = os.getenv("INFRAHUB_TOKEN")
+INFRAHUB_URL = "https://sandbox.infrahub.app/graphql"
+
+if not INFRAHUB_TOKEN:
+    print("❌ Error: INFRAHUB_API_TOKEN not found in .env file.")
+    sys.exit(1)
+
+HEADERS = {
+    "X-INFRAHUB-KEY": INFRAHUB_TOKEN,
+    "Content-Type": "application/json"
+}
 
 
-def upsert_data():
-    # 1. Check/Create Namespace
-    find_ns = gql_request("query($n: String!){IpamNamespace(name__value: $n){edges{node{id}}}}",
-                          {"n": NAMESPACE_NAME})
-    ns_edges = find_ns.get('IpamNamespace', {}).get('edges', [])
+def run_gql(query, variables=None):
+    """Helper to handle HTTP and GraphQL-specific errors."""
+    try:
+        response = requests.post(
+            INFRAHUB_URL,
+            json={'query': query, 'variables': variables},
+            headers=HEADERS,
+            timeout=15
+        )
+        response.raise_for_status()
+        data = response.json()
 
-    if ns_edges:
-        ns_id = ns_edges[0]['node']['id']
-        print(f"✔ Namespace found: {ns_id}")
-    else:
-        create_ns = gql_request("mutation($n: String!){IpamNamespaceCreate(data:{name:{value:$n}}){object{id}}}",
-                                {"n": NAMESPACE_NAME})
-        ns_id = create_ns['IpamNamespaceCreate']['object']['id']
-        print(f"✚ Namespace created: {ns_id}")
+        if "errors" in data:
+            # We print the error but still return the data in case of partial success
+            for err in data["errors"]:
+                print(f"⚠️ GraphQL Error: {err.get('message')}")
 
-    # 2. Check/Create IPs
-    ips = ["10.10.10.11/24", "10.10.10.12/24", "10.10.10.13/24"]
-    for ip in ips:
-        find_ip = gql_request("""
-            query($a: String!, $ns: ID!){
-                IpamIPAddress(address__value: $a, ip_namespace__ids: [$ns]){
-                    edges{node{id}}
-                }
-            }
-        """, {"a": ip, "ns": ns_id})
+        return data.get("data")
 
-        if find_ip.get('IpamIPAddress', {}).get('edges'):
-            print(f"  ✔ {ip} exists.")
-        else:
-            gql_request("""
-                mutation($a: String!, $ns: ID!){
-                    IpamIPAddressCreate(data:{address:{value:$a}, ip_namespace:{id:$ns}}){ok}
-                }
-            """, {"a": ip, "ns": ns_id})
-            print(f"  ✚ {ip} created.")
+    except requests.exceptions.RequestException as e:
+        print(f"🚫 Connection Error: {e}")
+        return None
 
 
 def main():
+    namespace_name = "Production_DHCP"
+    ips_to_push = ["10.0.0.11/32", "10.0.0.12/32", "10.0.0.13/32"]
 
+    print(f"🚀 Starting upsert for Namespace: {namespace_name}")
 
-    URL = "https://sandbox.infrahub.app/graphql"
-    HEADERS = {"X-INFRAHUB-KEY": "your_token_here", "Content-Type": "application/json"}
+    # --- STEP 1: GET OR CREATE NAMESPACE ---
+    find_ns_query = """
+    query GetNS($name: String!) {
+      IpamNamespace(name__value: $name) {
+        edges { node { id } }
+      }
+    }
+    """
+    ns_data = run_gql(find_ns_query, {"name": namespace_name})
 
+    if ns_data and ns_data["IpamNamespace"]["edges"]:
+        ns_id = ns_data["IpamNamespace"]["edges"][0]["node"]["id"]
+        print(f"✔ Namespace found (ID: {ns_id})")
+    else:
+        create_ns_mutation = """
+        mutation CreateNS($name: String!) {
+          IpamNamespaceCreate(data: { name: { value: $name } }) {
+            object { id }
+          }
+        }
+        """
+        create_res = run_gql(create_ns_mutation, {"name": namespace_name})
+        if not create_res: return
+        ns_id = create_res["IpamNamespaceCreate"]["object"]["id"]
+        print(f"✚ Created Namespace (ID: {ns_id})")
 
+    # --- STEP 2: UPSERT IP ADDRESSES ---
+    for ip in ips_to_push:
+        # QUERY: Uses String! for the list filter
+        find_ip_query = """
+        query GetIP($addr: String!, $ns_str: String!) {
+          IpamIPAddress(address__value: $addr, ip_namespace__ids: [$ns_str]) {
+            edges { node { id } }
+          }
+        }
+        """
+        ip_check = run_gql(find_ip_query, {"addr": ip, "ns_str": ns_id})
 
-    if __name__ == "__main__":
-        upsert_data()
+        # We only push if the query found 0 results
+        if ip_check and ip_check["IpamIPAddress"]["edges"]:
+            print(f"  ✔ {ip} already exists. Skipping.")
+        else:
+            # MUTATION: Uses ID! for the object relationship
+            create_ip_mutation = """
+            mutation CreateIP($addr: String!, $ns_id: ID!) {
+              IpamIPAddressCreate(data: { 
+                address: { value: $addr }, 
+                ip_namespace: { id: $ns_id } 
+              }) { ok }
+            }
+            """
+            mutate_res = run_gql(create_ip_mutation, {"addr": ip, "ns_id": ns_id})
+            if mutate_res:
+                print(f"  ✚ Successfully pushed {ip}")
+            else:
+                print(f"  ❌ Failed to push {ip}")
+
+    print("\n✅ Process complete.")
+
 
 # Standard call to the main() function.
 if __name__ == '__main__':
