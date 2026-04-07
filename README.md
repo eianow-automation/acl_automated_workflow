@@ -64,6 +64,10 @@ flowchart TB
 | Simple - No Code | No-Code | Workflow orchestration through visual/drag-and-drop interface |
 | Advanced | CI/CD Pipeline | Fully automated execution integrated into deployment pipelines |
 
+
+
+
+
 ## Three-Step Workflow
 
 ### Step 1: Generate ACL
